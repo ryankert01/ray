@@ -43,8 +43,8 @@ def _extract_map_component(
         else:
             child_array = arr.items
 
-    # Case 2: ListArray<Struct<Key, Value>>
-    elif isinstance(arr, pyarrow.ListArray):
+    # Case 2: ListArray<Struct<Key, Value>> or LargeListArray<Struct<Key, Value>>
+    elif isinstance(arr, (pyarrow.ListArray, pyarrow.LargeListArray)):
         flat_values = arr.values
         if (
             isinstance(flat_values, pyarrow.StructArray)
@@ -53,16 +53,9 @@ def _extract_map_component(
             idx = 0 if component == MapComponent.KEYS else 1
             child_array = flat_values.field(idx)
 
-    # Case 3: If structure is unknown (e.g. FixedSizeList), attempt to cast to strict MapType.
+    # Validate that we successfully extracted child_array from a supported type
     if child_array is None:
-        try:
-            inner_type = arr.type.value_type
-            map_type = pyarrow.map_(inner_type[0].type, inner_type[1].type)
-            return _extract_map_component(arr.cast(map_type), component)
-        except (AttributeError, IndexError, pyarrow.ArrowInvalid):
-            raise ValueError(
-                f"Cannot extract {component} from array of type {arr.type}"
-            )
+        raise ValueError(f"Cannot extract {component} from array of type {arr.type}")
 
     # Reconstruct ListArray & Normalize Offsets
     offsets = arr.offsets
@@ -127,7 +120,10 @@ class _MapNamespace:
             arrow_type = self._expr.data_type.to_arrow_dtype()
 
             is_physical_map = (
-                pyarrow.types.is_list(arrow_type)
+                (
+                    pyarrow.types.is_list(arrow_type)
+                    or pyarrow.types.is_large_list(arrow_type)
+                )
                 and pyarrow.types.is_struct(arrow_type.value_type)
                 and arrow_type.value_type.num_fields >= 2
             )
